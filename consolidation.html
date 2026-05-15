@@ -578,9 +578,12 @@
         const sizeLimits = {1:{ side:200, perimSum:300 }, 2:{ side:150, perimSum:300 }, 3:{ side:105, perimSum:200 }};
         const lim = sizeLimits[rate.c] || sizeLimits[3];
         boxes.forEach(box => {
-            const sides = [...box.dims].sort((a,b) => b-a);
+            // split model: 体积重用产品尺寸，尺寸类检查用包装尺寸
+            const sBuf = box.surchargeBuffer || 0;
+            const checkDims = sBuf > 0 ? [box.dims[0]+sBuf, box.dims[1]+sBuf, box.dims[2]+sBuf] : box.dims;
+            const sides = [...checkDims].sort((a,b) => b-a);
             const perimeterSum = sides[0] + 2 * (sides[1] + sides[2]);  // 长 + 横周
-            // 单件计算
+            // 单件计算 (体积重用产品尺寸)
             let actualW = Math.max((box.dims[0]*box.dims[1]*box.dims[2])/6000, box.weight || 0);
             if (actualW > rate.m) anyOverWeight = true;
             if (sides[0] > lim.side || perimeterSum > lim.perimSum) anyOverSize = true;
@@ -622,14 +625,17 @@
         let totalCost = 0, totalBW = 0;
         let anyOver60 = false;
         boxes.forEach(box => {
-            const maxSide = Math.max(box.dims[0], box.dims[1], box.dims[2]);
+            // split model: 60cm 记抛判断用包装尺寸（碰到限制更保守）
+            const sBuf = box.surchargeBuffer || 0;
+            const checkDims = sBuf > 0 ? [box.dims[0]+sBuf, box.dims[1]+sBuf, box.dims[2]+sBuf] : box.dims;
+            const maxSide = Math.max(...checkDims);
             const useVol = maxSide > 60;  // 单边超 60cm 记抛
             if (useVol) anyOver60 = true;
             let w;
             if (useVol) {
                 w = Math.max((box.dims[0]*box.dims[1]*box.dims[2])/6000, box.weight || 0);
             } else {
-                w = box.weight || (box.dims[0]*box.dims[1]*box.dims[2])/6000;  // 实重，未填则按体积
+                w = box.weight || (box.dims[0]*box.dims[1]*box.dims[2])/6000;
             }
             // 转克
             const wg = w * 1000;
@@ -677,7 +683,10 @@
         const errorReasons = [];
         boxes.forEach(box => {
             for (let i = 0; i < box.qty; i++) {
-                const sides = [...box.dims].sort((a,b) => b-a);
+                // split model: 体积重用产品尺寸，附加费判定用包装尺寸 (产品 + surchargeBuffer)
+                const sBuf = box.surchargeBuffer || 0;
+                const checkDims = sBuf > 0 ? [box.dims[0]+sBuf, box.dims[1]+sBuf, box.dims[2]+sBuf] : box.dims;
+                const sides = [...checkDims].sort((a,b) => b-a);
                 const L = sides[0], W = sides[1], girth = L + 2*(sides[1]+sides[2]);
                 let bw = Math.max(box.dims[0]*box.dims[1]*box.dims[2]/6000, box.weight);
                 if (bw < 10) bw = 10;
@@ -718,7 +727,10 @@
         const errorReasons = [];
         boxes.forEach(box => {
             for (let i = 0; i < box.qty; i++) {
-                const sides = [...box.dims].sort((a,b) => b-a);
+                // split model: 体积重用产品尺寸，附加费判定用包装尺寸 (产品 + surchargeBuffer)
+                const sBuf = box.surchargeBuffer || 0;
+                const checkDims = sBuf > 0 ? [box.dims[0]+sBuf, box.dims[1]+sBuf, box.dims[2]+sBuf] : box.dims;
+                const sides = [...checkDims].sort((a,b) => b-a);
                 const L = sides[0], W = sides[1], girth = L + 2*(sides[1]+sides[2]);
                 let bw = Math.max(box.dims[0]*box.dims[1]*box.dims[2]/6000, box.weight);
                 totalBW += bw;
@@ -756,7 +768,10 @@
         const errorReasons = [];
         boxes.forEach(box => {
             for (let i = 0; i < box.qty; i++) {
-                const sides = [...box.dims].sort((a,b) => b-a);
+                // split model: 体积重用产品尺寸，附加费判定用包装尺寸 (产品 + surchargeBuffer)
+                const sBuf = box.surchargeBuffer || 0;
+                const checkDims = sBuf > 0 ? [box.dims[0]+sBuf, box.dims[1]+sBuf, box.dims[2]+sBuf] : box.dims;
+                const sides = [...checkDims].sort((a,b) => b-a);
                 const L = sides[0], W = sides[1], girth = L + 2*(sides[1]+sides[2]);
                 let bw = Math.max(box.dims[0]*box.dims[1]*box.dims[2]/6000, box.weight);
                 if (bw < 10) bw = 10;
@@ -777,17 +792,9 @@
         });
         totalBW = Math.ceil(totalBW);
         if (hasError) return { carrierId: 'ca_zs', name: '正石加拿大海运', valid: false, invalidReason: '超限：' + errorReasons.join('；'), totalCost: Infinity, billWeight: totalBW, surcharges: { list: [], total: 0 }, formula: '', baseCost: 0, boxDetails: [] };
-        // 阶梯/线性
-        let baseCost, formula;
-        if (totalBW <= 10) {
-            const steps = {east:{4:155,5:160,6:166,7:172,8:178,9:184,10:190}}.east;  // 默认 east
-            baseCost = steps[Math.max(totalBW, 4)] || steps[10];
-            formula = `阶梯价 ${totalBW}kg`;
-        } else {
-            const rate = totalBW >= 96 ? 18 : 19;
-            baseCost = totalBW * rate;
-            formula = `${totalBW}kg × ¥${rate}/kg`;
-        }
+        // 正石加拿大: 平价 ¥24/kg (与原代码一致)
+        const baseCost = totalBW * 24;
+        const formula = `${totalBW}kg × ¥24/kg`;
         const surList = Object.values(surMap);
         const surTotal = surList.reduce((s, x) => s + x.cost, 0);
         return { carrierId: 'ca_zs', name: '正石加拿大海运', valid: true, totalCost: baseCost + surTotal, billWeight: totalBW, surcharges: { list: surList, total: surTotal }, formula, baseCost, boxDetails: [] };
@@ -800,7 +807,10 @@
         let sumOW = 0, sumOS = 0, countOW = 0, countOS = 0, maxOWMin = 0, maxOSMin = 0;
         boxes.forEach(box => {
             for (let i = 0; i < box.qty; i++) {
-                const sides = [...box.dims].sort((a,b) => b-a);
+                // split model
+                const sBuf = box.surchargeBuffer || 0;
+                const checkDims = sBuf > 0 ? [box.dims[0]+sBuf, box.dims[1]+sBuf, box.dims[2]+sBuf] : box.dims;
+                const sides = [...checkDims].sort((a,b) => b-a);
                 const L = sides[0], W = sides[1];
                 let bw = Math.max(box.dims[0]*box.dims[1]*box.dims[2]/6000, box.weight);
                 if (bw < 10) bw = 10;
@@ -904,17 +914,24 @@
     const calcCarrierSAAir = (boxes, opts) => _calcME(boxes, opts, { id: 'me_sa_air', name: '沙特空运', ratePerKg: 50, cbmRate: 0, isAir: true, deliveryCrateRate: 200, deliveryCartonPerPiece: 25 });
 
     // 单箱在某个承运商下的成本计算
-    const calcBoxByCarrier = (carrierId, dims, weight, isCrate, region, isMulti) => {
-        const sides = [...dims].sort((a, b) => b - a);
-        const girth = sides[0] + 2 * (sides[1] + sides[2]);
+    // dims = 产品尺寸（用于体积重）, surchargeBuffer = 加到尺寸用于附加费判定的缓冲（0=不加）
+    const calcBoxByCarrier = (carrierId, dims, weight, isCrate, region, isMulti, surchargeBuffer = 0) => {
+        // 体积重用产品尺寸（你报关的尺寸）
         const vol = (dims[0] * dims[1] * dims[2]) / 6000;
         let bw = Math.max(vol, weight);
 
-        // 各承运商的每件最低计费重
-        if (carrierId === 'ch' && isMulti) bw = Math.max(bw, 12);
-        else if (carrierId === 'my' && isMulti) bw = Math.max(bw, 12);
-        else if (carrierId === 'zs') bw = Math.max(bw, 4);
-        else bw = Math.max(bw, 5);
+        // 附加费判定用包装尺寸（产品尺寸 + 包装缓冲）
+        const checkDims = surchargeBuffer > 0
+            ? [dims[0] + surchargeBuffer, dims[1] + surchargeBuffer, dims[2] + surchargeBuffer]
+            : [...dims];
+        const sides = [...checkDims].sort((a, b) => b - a);
+        const girth = sides[0] + 2 * (sides[1] + sides[2]);
+
+        // 各承运商的每件最低计费重 (与原计算器一致)
+        if (carrierId === 'ch') bw = Math.max(bw, 12);        // 昌晖加班船 单件也起收 12kg
+        else if (carrierId === 'my') bw = Math.max(bw, 12);   // 明扬加班船 单件也起收 12kg
+        else if (carrierId === 'zs') bw = Math.max(bw, 4);    // 正石 4kg
+        else bw = Math.max(bw, 5);                            // 小货 5kg
         bw = Math.ceil(bw);
 
         // 基础运费
@@ -963,7 +980,7 @@
             }
         }
 
-        // 各承运商的附加费规则
+        // 各承运商的附加费规则 (使用 sides/girth = 包装尺寸)
         const surcharges = { list: [], total: 0 };
         const addSur = (name, cost) => { surcharges.list.push({ name, cost }); surcharges.total += cost; };
 
@@ -1018,7 +1035,7 @@
                 let total = 0;
                 const boxDetails = [];
                 boxes.forEach(box => {
-                    const r = calcBoxByCarrier(id, box.dims, box.weight, !!box.isCrate, region, isMulti);
+                    const r = calcBoxByCarrier(id, box.dims, box.weight, !!box.isCrate, region, isMulti, box.surchargeBuffer || 0);
                     boxDetails.push({ ...box, result: r });
                     total += r.totalCost * box.qty;
                 });
@@ -1450,9 +1467,10 @@
         // === 方案 A: 拆分发货（即原箱发货）===
         const planSplit = useMemo(() => {
             if (!hasInput) return null;
-            // 构建箱列表
+            // 构建箱列表 - dims 是产品(报关)尺寸；surchargeBuffer 用于附加费判定（包装尺寸 = 产品 + 缓冲）
             const boxes = packageAnalyses.map(p => ({
                 dims: [p.l, p.w, p.h],
+                surchargeBuffer: p.isCrate ? CRATE_BUFFER : PACK_BUFFER,
                 weight: p.weight,
                 qty: p.qty,
                 isCrate: p.isCrate,
@@ -3186,8 +3204,10 @@
         const [openTab, setOpenTab] = useState('US');  // US/CA/AU/ME
 
         // 把 validPackages 转换为渠道函数需要的 boxes 格式
+        // dims = 产品尺寸（用于体积重）; surchargeBuffer = 包装缓冲（用于附加费判定）
         const boxes = (validPackages || []).map(p => ({
             dims: [p.l, p.w, p.h],
+            surchargeBuffer: p.isCrate ? CRATE_BUFFER : PACK_BUFFER,
             weight: p.weight || 0,
             qty: p.qty,
             isCrate: !!p.isCrate
@@ -3247,6 +3267,19 @@
         const cheapestME = findCheapest([liveMEUAE, liveMESA, liveMEUAEAir, liveMESAAir]);
         const cheapestCN = findCheapest([liveCNAir, liveCNEMS]);
 
+        // 计算各包装最大尺寸 / 围长（已含 buffer），用于大件警告
+        const dimAlerts = boxes.map((b, i) => {
+            const sides = [...b.dims].sort((a, b2) => b2 - a);
+            const girth = sides[0] + 2 * (sides[1] + sides[2]);
+            return { idx: i + 1, longest: sides[0], girth, weight: b.weight };
+        });
+        const maxGirthBox = dimAlerts.reduce((a, b) => (!a || b.girth > a.girth) ? b : a, null);
+        const maxLongestBox = dimAlerts.reduce((a, b) => (!a || b.longest > a.longest) ? b : a, null);
+        // 阈值参考各渠道
+        // 围长: 信源350 / 河池400 / 正石加拿大410 (CA上限) · 美国 320 (软上限) · 中邮 200-300
+        // 长边: 信源/河池/正石加拿大 270 (CA上限) · 美国 软上限120 · 中邮第三类105
+        const exceedsAllRegular = maxGirthBox && (maxGirthBox.girth > 410 || (maxLongestBox && maxLongestBox.longest > 270));
+
         // 实时价 → CarrierRefBlock props
         const liveProps = (live, cheapest) => {
             if (!live) return {};
@@ -3286,7 +3319,7 @@
                 </p>
 
                 {/* 实时计算状态指示 */}
-                <div className="mb-5 px-3 py-2 rounded-lg text-[11px] font-mono flex items-center justify-between gap-2 flex-wrap" style={{
+                <div className="mb-3 px-3 py-2 rounded-lg text-[11px] font-mono flex items-center justify-between gap-2 flex-wrap" style={{
                     background: hasInput ? 'var(--accent-soft)' : 'var(--bg)',
                     border: '1px solid',
                     borderColor: hasInput ? 'var(--accent)' : 'var(--line-soft)',
@@ -3295,7 +3328,7 @@
                     {hasInput ? (
                         <>
                             <span>
-                                💰 实时计算中 · 共 <span className="font-bold">{boxes.length}</span> 种包装 / <span className="font-bold">{totalQty}</span> 件
+                                💰 实时计算中 · 共 <span className="font-bold">{boxes.length}</span> 种包装 / <span className="font-bold">{totalQty}</span> 件 · 已加 +{boxes[0]?.isCrate ? CRATE_BUFFER : PACK_BUFFER}cm/边 包装缓冲
                             </span>
                             <span className="text-[10px] opacity-70">目的地 {targetCN}{country ? ` (${country}区)` : ''}</span>
                         </>
@@ -3305,6 +3338,41 @@
                         </>
                     )}
                 </div>
+
+                {/* 超大件警告 */}
+                {hasInput && exceedsAllRegular && (
+                    <div className="mb-5 p-3 rounded-lg" style={{
+                        background: 'rgba(220, 38, 38, 0.08)',
+                        border: '1.5px solid var(--bad)',
+                    }}>
+                        <div className="flex items-start gap-2">
+                            <span className="text-base flex-shrink-0">🚛</span>
+                            <div className="flex-1">
+                                <div className="text-xs font-bold mb-1" style={{color: 'var(--bad)'}}>
+                                    包装超大 · 所有常规海运 / 中邮渠道均拒收
+                                </div>
+                                <div className="text-[11px] font-mono space-y-0.5" style={{color: 'var(--ink-2)'}}>
+                                    {maxLongestBox && maxLongestBox.longest > 270 && (
+                                        <div>· 包装 {maxLongestBox.idx} 最长边 <span className="font-bold" style={{color: 'var(--bad)'}}>{maxLongestBox.longest.toFixed(0)}cm</span> 超 270cm (加拿大/中邮上限)</div>
+                                    )}
+                                    {maxGirthBox && maxGirthBox.girth > 410 && (
+                                        <div>· 包装 {maxGirthBox.idx} 围长 <span className="font-bold" style={{color: 'var(--bad)'}}>{maxGirthBox.girth.toFixed(0)}cm</span> 超 410cm (正石加拿大上限)</div>
+                                    )}
+                                    {maxGirthBox && maxGirthBox.girth > 320 && maxGirthBox.girth <= 410 && (
+                                        <div>· 包装 {maxGirthBox.idx} 围长 <span className="font-bold" style={{color: 'var(--warn)'}}>{maxGirthBox.girth.toFixed(0)}cm</span> 超 320cm (美国 +¥600/件 超大附加费)</div>
+                                    )}
+                                </div>
+                                <div className="text-[11px] font-bold mt-2" style={{color: 'var(--ink)'}}>
+                                    {country === 'US' ? (
+                                        <>→ 建议走 <span style={{color: 'var(--ydng)'}}>云鼎卡车派送</span>（不限尺寸 · 海运到加州 + 卡车送货上门）</>
+                                    ) : (
+                                        <>→ 建议联系物流商 <span style={{color: 'var(--bad)'}}>单独询价</span>，或拆分发货</>
+                                    )}
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                )}
 
                 {/* 国家 Tab */}
                 <div className="flex flex-wrap gap-2 mb-5">
